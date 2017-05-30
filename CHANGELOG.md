@@ -10,6 +10,7 @@ Targets
 
 Unreleased
 ----------
+* AC branch flow limits in terms of current magnitudes squared.
 
 Version 1.3.0
 -------------

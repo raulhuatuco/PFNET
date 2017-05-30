@@ -418,6 +418,8 @@ cdef class Constraint(ConstraintBase):
             self._c_constr = cconstr.CONSTR_DC_FLOW_LIM_new(net._c_net)
         elif name == "AC branch flow limits":
             self._c_constr = cconstr.CONSTR_AC_FLOW_LIM_new(net._c_net)
+        elif name == "squared AC branch flow limits":
+            self._c_constr = cconstr.CONSTR_AC_FLOW_LIM_2_new(net._c_net)
         elif name == "linearized AC branch flow limits":
             self._c_constr = cconstr.CONSTR_AC_LIN_FLOW_LIM_new(net._c_net)
         elif name == "battery dynamics":

@@ -68,6 +68,7 @@ problem_hdr = 	$(inc_path)/constr.h \
 problem_constr_src = 	problem/constr/constr_NBOUND.c  \
 			problem/constr/constr_DC_FLOW_LIM.c \
 			problem/constr/constr_AC_FLOW_LIM.c \
+			problem/constr/constr_AC_FLOW_LIM_2.c \
 			problem/constr/constr_AC_LIN_FLOW_LIM.c \
 			problem/constr/constr_DCPF.c \
 			problem/constr/constr_ACPF.c \
@@ -86,6 +87,7 @@ problem_constr_src = 	problem/constr/constr_NBOUND.c  \
 problem_constr_hdr = 	$(inc_path)/constr_NBOUND.h \
 			$(inc_path)/constr_DC_FLOW_LIM.h \
 			$(inc_path)/constr_AC_FLOW_LIM.h \
+			$(inc_path)/constr_AC_FLOW_LIM_2.h \
 			$(inc_path)/constr_AC_LIN_FLOW_LIM.h \
 			$(inc_path)/constr_DCPF.h \
 			$(inc_path)/constr_ACPF.h \

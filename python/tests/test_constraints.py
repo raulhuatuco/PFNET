@@ -4686,6 +4686,281 @@ class TestConstraints(unittest.TestCase):
             self.assertTupleEqual(l.shape,(constr.G_row,))
             self.assertTrue(np.all(l == -1e8))
 
+    def test_constr_AC_FLOW_LIM_2(self):
+
+        # Constants
+        h = 1e-11
+        tol = 1e-2
+        eps = 1.1 # %
+
+        # Multiperiod
+        for case in test_cases.CASES:
+
+            net = pf.Parser(case).parse(case,self.T)
+            self.assertEqual(net.num_periods,self.T)
+
+            # Vars
+            net.set_flags('bus',
+                          'variable',
+                          'any',
+                          ['voltage magnitude','voltage angle'])
+            net.set_flags('branch',
+                          'variable',
+                          'tap changer',
+                          'tap ratio')
+            net.set_flags('branch',
+                          'variable',
+                          'phase shifter',
+                          'phase shift')
+            self.assertEqual(net.num_vars,
+                             (2*net.get_num_buses() +
+                              net.get_num_tap_changers() +
+                              net.get_num_phase_shifters())*self.T)
+
+            x0 = net.get_var_values()
+            self.assertTrue(type(x0) is np.ndarray)
+            self.assertTupleEqual(x0.shape,(net.num_vars,))
+
+            # Constr
+            constr = pf.Constraint('squared AC branch flow limits',net)
+            self.assertEqual(constr.name,'squared AC branch flow limits')
+            constr.analyze()
+            num_constr = len([br for br in net.branches if br.ratingA != 0.])*2*net.num_periods
+            self.assertTupleEqual(constr.f.shape,(num_constr,))
+            self.assertEqual(constr.J_row,num_constr)
+
+            # zero ratings
+            for br in net.branches:
+                if br.ratingA == 0.:
+                    br.ratingA = 100.
+
+            # Constraint
+            constr = pf.Constraint('squared AC branch flow limits',net)
+            self.assertEqual(constr.name,'squared AC branch flow limits')
+
+            f = constr.f
+            J = constr.J
+            A = constr.A
+            b = constr.b
+            G = constr.G
+            l = constr.l
+            u = constr.u
+
+            # Before
+            self.assertEqual(constr.num_extra_vars,0)
+            self.assertTrue(type(f) is np.ndarray)
+            self.assertTupleEqual(f.shape,(0,))
+            self.assertTrue(type(b) is np.ndarray)
+            self.assertTupleEqual(b.shape,(0,))
+            self.assertTrue(type(J) is coo_matrix)
+            self.assertTupleEqual(J.shape,(0,0))
+            self.assertEqual(J.nnz,0)
+            self.assertTrue(type(A) is coo_matrix)
+            self.assertTupleEqual(A.shape,(0,0))
+            self.assertEqual(A.nnz,0)
+            self.assertTrue(type(G) is coo_matrix)
+            self.assertTupleEqual(G.shape,(0,0))
+            self.assertEqual(G.nnz,0)
+            self.assertTrue(type(u) is np.ndarray)
+            self.assertTupleEqual(u.shape,(0,))
+            self.assertTrue(type(l) is np.ndarray)
+            self.assertTupleEqual(l.shape,(0,))
+            self.assertEqual(constr.J_row,0)
+            self.assertEqual(constr.A_row,0)
+            self.assertEqual(constr.G_row,0)
+            self.assertEqual(constr.J_nnz,0)
+            self.assertEqual(constr.A_nnz,0)
+            self.assertEqual(constr.G_nnz,0)
+            self.assertEqual(constr.num_extra_vars,0)
+
+            num_constr = net.get_num_branches()*2*self.T
+            num_Jnnz = (net.get_num_branches()*8 +
+                        net.get_num_tap_changers()*2 +
+                        net.get_num_phase_shifters()*2)*self.T+num_constr
+
+            constr.analyze()
+            self.assertEqual(num_Jnnz,constr.J_nnz)
+            self.assertEqual(0,constr.G_nnz)
+            self.assertEqual(num_constr,constr.J_row)
+           
+            f = constr.f
+            J = constr.J
+            A = constr.A
+            b = constr.b
+            G = constr.G
+            l = constr.l
+            u = constr.u
+            
+            # After analyze
+            self.assertEqual(constr.num_extra_vars,num_constr)
+            self.assertTrue(type(f) is np.ndarray)
+            self.assertTupleEqual(f.shape,(num_constr,))
+            self.assertTrue(type(b) is np.ndarray)
+            self.assertTupleEqual(b.shape,(0,))
+            self.assertTrue(type(J) is coo_matrix)
+            self.assertTupleEqual(J.shape,(num_constr,net.num_vars+num_constr))
+            self.assertEqual(J.nnz,num_Jnnz)
+            self.assertTrue(type(A) is coo_matrix)
+            self.assertTupleEqual(A.shape,(0,net.num_vars+num_constr))
+            self.assertEqual(A.nnz,0)
+            self.assertTrue(type(G) is coo_matrix)
+            self.assertTupleEqual(G.shape,(num_constr,net.num_vars+num_constr))
+            self.assertEqual(G.nnz,num_constr)
+            self.assertTrue(np.all(G.row == np.array(range(num_constr))))
+            self.assertTrue(np.all(G.col == np.array(range(net.num_vars,net.num_vars+num_constr))))
+            self.assertTrue(np.all(G.row == G.col-net.num_vars))
+            self.assertTrue(np.all(G.data == 1.))
+            self.assertTrue(type(u) is np.ndarray)
+            self.assertTupleEqual(u.shape,(num_constr,))
+            self.assertTrue(type(l) is np.ndarray)
+            self.assertTupleEqual(l.shape,(num_constr,))
+            self.assertTrue(np.all(l == 0.))
+            for t in range(net.num_periods):
+                for branch in net.branches:
+                    i = t*net.num_branches*2+2*branch.index
+                    self.assertEqual(u[i],branch.ratingA**2.)
+                    self.assertEqual(u[i+1],branch.ratingA**2.)
+
+            # Hessian structure
+            for i in range(constr.J.shape[0]):
+                H = constr.get_H_single(i)
+                self.assertTupleEqual(H.shape,(net.num_vars+num_constr,net.num_vars+num_constr))
+                self.assertTrue(np.all(H.row >= H.col))
+            Hcomb = constr.H_combined
+            H_comb_nnz = 2*(net.num_branches*10 +
+                            net.get_num_tap_changers()*5+
+                            net.get_num_phase_shifters()*5)*self.T
+            self.assertTupleEqual(Hcomb.shape,(net.num_vars+num_constr,net.num_vars+num_constr))
+            self.assertTrue(np.all(Hcomb.row >= Hcomb.col))
+            self.assertEqual(Hcomb.nnz,H_comb_nnz)
+
+            y0 = np.random.randn(num_constr)
+
+            constr.eval(x0,y0)
+            self.assertEqual(num_constr,constr.J_row)
+            self.assertEqual(0,constr.G_nnz)
+            self.assertEqual(num_Jnnz,constr.J_nnz)
+            
+            f = constr.f
+            J = constr.J
+            A = constr.A
+            b = constr.b
+            G = constr.G
+            l = constr.l
+            u = constr.u
+            constr.combine_H(np.ones(f.size),False)
+            Hcomb = constr.H_combined
+
+            # After eval
+            self.assertTrue(not np.any(np.isinf(f)))
+            self.assertTrue(not np.any(np.isnan(f)))
+            
+            # Cross check current magnitudes squared
+            J_row = 0
+            for t in range(net.num_periods):
+                for branch in net.branches:
+                    i = t*net.num_branches*2+2*branch.index
+                    Pkm = branch.get_P_km()[t]
+                    Qkm = branch.get_Q_km()[t]
+                    Pmk = branch.get_P_mk()[t]
+                    Qmk = branch.get_Q_mk()[t]
+                    vk = branch.bus_k.v_mag[t]
+                    vm = branch.bus_m.v_mag[t]
+                    ikmmag2 = np.abs((Pkm/vk) + 1j*(Qkm/vk))**2.
+                    imkmag2 = np.abs((Pmk/vm) + 1j*(Qmk/vm))**2.
+                    error_km = 100.*np.abs(ikmmag2-f[i]-y0[J_row])/max([ikmmag2,tol])
+                    error_mk = 100.*np.abs(imkmag2-f[i+1]-y0[J_row+1])/max([imkmag2,tol])
+                    self.assertLess(error_km,eps)
+                    self.assertLess(error_mk,eps)
+                    J_row += 2
+
+            # Jacobian check
+            constr.eval(x0,y0)
+            f0 = constr.f.copy()
+            J0 = constr.J.copy()
+            for i in range(NUM_TRIALS):
+
+                d = np.random.randn(net.num_vars+num_constr)
+
+                x = x0 + h*d[:net.num_vars]
+                y = y0 + h*d[net.num_vars:]
+
+                constr.eval(x,y)
+                f1 = constr.f
+
+                Jd_exact = J0*d
+                Jd_approx = (f1-f0)/h
+                error = 100.*norm(Jd_exact-Jd_approx)/np.maximum(norm(Jd_exact),tol)
+                self.assertLessEqual(error,EPS)
+
+            # Sigle Hessian check
+            for i in range(NUM_TRIALS):
+
+                j = np.random.randint(0,f.shape[0])
+
+                constr.eval(x0,y0)
+
+                g0 = constr.J.tocsr()[j,:].toarray().flatten()
+                H0 = constr.get_H_single(j)
+
+                self.assertTrue(np.all(H0.row >= H0.col)) # lower triangular
+                
+                H0 = (H0 + H0.T) - triu(H0)
+
+                d = np.random.randn(net.num_vars+num_constr)
+
+                x = x0 + h*d[:net.num_vars]
+                y = y0 + h*d[net.num_vars:]
+
+                constr.eval(x,y)
+                
+                g1 = constr.J.tocsr()[j,:].toarray().flatten()
+
+                Hd_exact = H0*d
+                Hd_approx = (g1-g0)/h
+                error = 100.*norm(Hd_exact-Hd_approx)/np.maximum(norm(Hd_exact),tol)
+                self.assertLessEqual(error,EPS)
+
+            # Combined Hessian check
+            h = 1e-12
+            coeff = np.random.randn(f0.shape[0])
+            constr.eval(x0,y0)
+            constr.combine_H(coeff,False)
+            J0 = constr.J
+            g0 = J0.T*coeff
+            H0 = constr.H_combined.copy()
+            self.assertTrue(type(H0) is coo_matrix)
+            self.assertTupleEqual(H0.shape,(net.num_vars+num_constr,net.num_vars+num_constr))
+            self.assertTrue(np.all(H0.row >= H0.col)) # lower triangular
+            H0 = (H0 + H0.T) - triu(H0)
+            for i in range(NUM_TRIALS):
+
+                d = np.random.randn(net.num_vars+num_constr)
+
+                x = x0 + h*d[:net.num_vars]
+                y = y0 + h*d[net.num_vars:]
+
+                constr.eval(x,y)
+
+                g1 = constr.J.T*coeff
+
+                Hd_exact = H0*d
+                Hd_approx = (g1-g0)/h
+                error = 100.*norm(Hd_exact-Hd_approx)/np.maximum(norm(Hd_exact),tol)
+                self.assertLessEqual(error,EPS)
+
+            # Combined Hessian check
+            coeff = np.random.randn(f0.shape[0])
+            constr.eval(x0,y0)
+            constr.combine_H(coeff,False)
+            H = constr.H_combined.copy()
+            H_manual = 0
+            for i in range(constr.f.size):
+                Hi = constr.get_H_single(i)
+                H_manual = H_manual + coeff[i]*Hi
+            diff = coo_matrix(H_manual-H)
+            self.assertLess(norm(diff.data)/norm(H.data),1e-12)
+
     def tearDown(self):
 
         pass
