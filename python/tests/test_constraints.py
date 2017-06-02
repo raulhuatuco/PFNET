@@ -15,7 +15,7 @@ from numpy.linalg import norm
 from scipy.sparse import coo_matrix,triu,tril,eye
 
 NUM_TRIALS = 25
-EPS = 2.5 # %
+EPS = 5.0 # %
 TOL = 1e-4
 
 class TestConstraints(unittest.TestCase):
@@ -1864,6 +1864,10 @@ class TestConstraints(unittest.TestCase):
             self.assertEqual(constr.J_row,rowsJ*self.T)
             self.assertEqual(constr.A_row,rowsA*self.T)
             self.assertEqual(constr.num_extra_vars,rowsJ*self.T)
+
+            y_init = constr.init_extra_vars
+            self.assertEqual(y_init.size,constr.num_extra_vars)
+            self.assertTrue(np.all(y_init == 0.))
             
             y0 = np.random.rand(constr.num_extra_vars)
             constr.eval(x0,y0)
@@ -2339,6 +2343,11 @@ class TestConstraints(unittest.TestCase):
             self.assertEqual(constr.A_nnz,Annz*self.T)
             self.assertEqual(constr.J_row,rowsJ*self.T)
             self.assertEqual(constr.A_row,rowsA*self.T)
+
+            y_init = constr.init_extra_vars
+            self.assertEqual(y_init.size,constr.num_extra_vars)
+            self.assertTrue(np.all(y_init == 0.))
+
             constr.eval(x0)
             self.assertEqual(constr.J_nnz,Jnnz*self.T)
             self.assertEqual(constr.A_nnz,0)
@@ -2566,6 +2575,11 @@ class TestConstraints(unittest.TestCase):
             self.assertEqual(constr.A_nnz,Annz*self.T)
             self.assertEqual(constr.J_row,rowsJ*self.T)
             self.assertEqual(constr.A_row,rowsA*self.T)
+
+            y_init = constr.init_extra_vars
+            self.assertEqual(y_init.size,constr.num_extra_vars)
+            self.assertTrue(np.all(y_init == 0.))
+
             constr.eval(x0)
             self.assertEqual(constr.J_nnz,Jnnz*self.T)
             self.assertEqual(constr.A_nnz,0)
@@ -3898,6 +3912,12 @@ class TestConstraints(unittest.TestCase):
             self.assertTrue(np.all(Hcomb.row >= Hcomb.col))
             self.assertEqual(Hcomb.nnz,H_comb_nnz)
 
+            y_init = constr.init_extra_vars
+            self.assertEqual(y_init.size,constr.num_extra_vars)
+            self.assertEqual(y_init.size,constr.f.size)
+            self.assertTrue(np.all(y_init == 0.))
+            constr.eval(x0)
+
             y0 = np.random.randn(num_constr)
 
             constr.eval(x0,y0)
@@ -3985,7 +4005,7 @@ class TestConstraints(unittest.TestCase):
                 error = 100.*norm(Hd_exact-Hd_approx)/np.maximum(norm(Hd_exact),tol)
                 self.assertLessEqual(error,EPS)
 
-            # Combined Hessian check
+            # Combined Hessian check 1
             h = 1e-12
             coeff = np.random.randn(f0.shape[0])
             constr.eval(x0,y0)
@@ -4013,7 +4033,7 @@ class TestConstraints(unittest.TestCase):
                 error = 100.*norm(Hd_exact-Hd_approx)/np.maximum(norm(Hd_exact),tol)
                 self.assertLessEqual(error,EPS)
 
-            # Combined Hessian check
+            # Combined Hessian check 2
             coeff = np.random.randn(f0.shape[0])
             constr.eval(x0,y0)
             constr.combine_H(coeff,False)
@@ -4147,6 +4167,91 @@ class TestConstraints(unittest.TestCase):
                             if counter >= num_max:
                                 break
                         self.assertLess((100.*num_bad)/min([net.num_buses,num_max]),1.) # less then 1 %
+
+        # Single period
+        for case in test_cases.CASES:
+
+            net = pf.Parser(case).parse(case,1)
+            self.assertEqual(net.num_periods,1)
+            
+            net.set_flags('bus',['variable','bounded'],'any','voltage magnitude')
+            net.set_flags('bus','variable','not slack','voltage angle')
+            self.assertEqual(net.num_vars,2*net.num_buses-net.get_num_slack_buses())
+
+            if len([b for b in net.branches if b.ratingA != 0.]) == 0:
+                continue
+            
+            constr = pf.Constraint('AC branch flow limits',net)
+            constr.analyze()
+            self.assertGreater(constr.num_extra_vars,0)
+
+            # Single Hessian check
+            x0 = net.get_var_values()
+            y0 = np.zeros(constr.num_extra_vars)
+            lam = np.random.randn(constr.f.size)
+            constr.eval(x0,y0)
+            for i in range(10):
+                
+                j = np.random.randint(0,constr.f.size)
+
+                constr.eval(x0,y0)
+
+                g0 = constr.J.tocsr()[j,:].toarray().flatten()
+                H0lt = constr.get_H_single(j).copy()
+
+                self.assertTrue(np.all(H0lt.row >= H0lt.col)) # lower triangular
+                H0 = (H0lt + H0lt.T) - triu(H0lt)
+
+                d = np.random.randn(net.num_vars+constr.num_extra_vars)
+
+                x = x0 + h*d[:net.num_vars]
+                y = y0 + h*d[net.num_vars:]
+
+                constr.eval(x,y)
+                
+                g1 = constr.J.tocsr()[j,:].toarray().flatten()
+
+                Hd_exact = H0*d
+                Hd_approx = (g1-g0)/h
+                error = 100.*norm(Hd_exact-Hd_approx)/np.maximum(norm(Hd_exact),tol)
+                self.assertLessEqual(error,EPS)
+                
+            # Combined Hessian check
+            x0 = net.get_var_values()
+            y0 = np.zeros(constr.num_extra_vars)
+            lam = np.random.randn(constr.f.size)
+            constr.eval(x0,y0)
+            constr.combine_H(lam)
+            
+            h = 1e-10
+            F0 = np.dot(constr.f,lam)
+            GradF0 = constr.J.T*lam
+            HessF0lt = constr.H_combined.copy()
+            self.assertTrue(np.all(HessF0lt.row >= HessF0lt.col)) # lower triangular
+            HessF0 = (HessF0lt + HessF0lt.T - triu(HessF0lt))
+            for i in range(10):
+                
+                d = np.random.randn(x0.size+y0.size)
+                
+                x = x0 + h*d[:x0.size]
+                y = y0 + h*d[x0.size:]
+                
+                constr.eval(x,y)
+                
+                F1 = np.dot(constr.f,lam)
+                GradF1 = constr.J.T*lam
+                
+                Jd_exact = np.dot(GradF0,d)
+                Jd_approx = (F1-F0)/h
+                
+                Hd_exact = HessF0*d
+                Hd_approx = (GradF1-GradF0)/h
+                
+                errorJ = 100.*norm(Jd_exact-Jd_approx)/norm(Jd_exact) 
+                errorH = 100.*norm(Hd_exact-Hd_approx)/norm(Hd_exact) 
+        
+                self.assertLess(errorJ,EPS)
+                self.assertLess(errorH,EPS)
                     
     def test_constr_DUMMY(self):
 
